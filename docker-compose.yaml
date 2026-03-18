@@ -1,0 +1,30 @@
+﻿services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: fcg-rabbitmq
+    ports:
+      - "5671:5672"  
+      - "15673:15672" 
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  fcg-notifications-api:
+    build:
+      context: ./src
+      dockerfile: FCG.Notifications.API/Dockerfile
+    container_name: api
+    networks:
+      - fcg-network
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__User=guest
+      - RabbitMQ__Password=guest
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
