@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="compose.yaml" />
+  </Folder>
+  <Project Path="src/FCG.Notifications.API/FCG.Notifications.API.csproj" />
+  <Project Path="src/FCG.Notifications.Application/FCG.Notifications.Application.csproj" />
+  <Project Path="src/FCG.Notifications.Infrastructure/FCG.Notifications.Infrastructure.csproj" />
+</Solution>
