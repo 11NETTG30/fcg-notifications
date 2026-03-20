@@ -17,7 +17,7 @@ public class PaymentProcessedConsumer : IConsumer<PaymentProcessedEvent>
     {
         var evt = context.Message;
 
-        if (evt.Status == "Pago")
+        if (evt.Status == "Approved")
         {
             Console.WriteLine($"[EMAIL ENVIADO] Confirmação de compra para {evt.Email}, OrderId: {evt.OrderId}, PaymentId: {evt.PaymentId}");
 
