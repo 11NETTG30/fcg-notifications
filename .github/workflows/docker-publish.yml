@@ -1,0 +1,39 @@
+name: Publicar Imagem Docker
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login no GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build e push da imagem
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src
+          file: ./src/FCG.Notifications.API/Dockerfile
+          push: true
+          tags: ghcr.io/11nettg30/fcg-notifications-api:latest
+          secrets: |
+            nuget_token=${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deletar imagens antigas sem tag
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: fcg-notifications-api
+          package-type: container
+          delete-only-untagged-versions: true
