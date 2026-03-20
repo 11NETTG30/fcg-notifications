@@ -13,6 +13,7 @@
         <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.4"/>
         <PackageReference Include="Scalar.AspNetCore" Version="2.13.9" />
         <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.5" />
+        <PackageReference Include="FCG.Shared.Infrastructure" Version="1.1.0" />
     </ItemGroup>
 
     <ItemGroup>
