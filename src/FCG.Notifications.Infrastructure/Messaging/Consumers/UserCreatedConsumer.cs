@@ -1,4 +1,4 @@
-﻿using FCG.Notifications.Application.Events;
+﻿using FCG.Shared.Contracts.Events;
 using MassTransit;
 using Microsoft.Extensions.Logging;
 

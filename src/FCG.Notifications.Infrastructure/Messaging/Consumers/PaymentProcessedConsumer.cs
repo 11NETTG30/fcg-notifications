@@ -1,4 +1,4 @@
-﻿using FCG.Notifications.Application.Events;
+﻿using FCG.Shared.Contracts.Events;
 using MassTransit;
 using Microsoft.Extensions.Logging;
 
@@ -17,21 +17,21 @@ public class PaymentProcessedConsumer : IConsumer<PaymentProcessedEvent>
     {
         var evt = context.Message;
 
-        if (evt.PaymentStatus == "Approved")
+        if (evt.Status == "Pago")
         {
-            Console.WriteLine($"[EMAIL ENVIADO] Confirmação de compra para {evt.UserEmail}, OrderId: {evt.OrderId}, PaymentId: {evt.PaymentId}");
+            Console.WriteLine($"[EMAIL ENVIADO] Confirmação de compra para {evt.Email}, OrderId: {evt.OrderId}, PaymentId: {evt.PaymentId}");
 
             _logger.LogInformation(
-                "[EMAIL ENVIADO] Confirmação de compra para {UserEmail}, OrderId: {OrderId}, PaymentI: {PaymentId}",
-                evt.UserEmail, evt.OrderId, evt.PaymentId);
+                "[EMAIL ENVIADO] Confirmação de compra para {Email}, OrderId: {OrderId}, PaymentId: {PaymentId}",
+                evt.Email, evt.OrderId, evt.PaymentId);
         }
         else
         {
-            Console.WriteLine($"[EMAIL NÃO ENVIADO] Pagamento rejeitado para {evt.UserEmail}. OrderId: {evt.OrderId}"); 
-            
+            Console.WriteLine($"[EMAIL NÃO ENVIADO] Pagamento rejeitado para {evt.Email}. OrderId: {evt.OrderId}");
+
             _logger.LogInformation(
-                "[EMAIL NÃO ENVIADO] Pagamento rejeitado para {UserEmail}. OrderId: {OrderId}",
-                evt.UserEmail, evt.OrderId);
+                "[EMAIL NÃO ENVIADO] Pagamento rejeitado para {Email}. OrderId: {OrderId}",
+                evt.Email, evt.OrderId);
         }
 
         return Task.CompletedTask;
