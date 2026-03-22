@@ -15,6 +15,7 @@ public static class MassTransitConfiguration
             {
                 x.AddConsumer<UserCreatedConsumer>();
                 x.AddConsumer<PaymentProcessedConsumer>();
+                x.AddConsumer<OrderPlacedConsumer>();
 
                 x.UsingRabbitMq((ctx, cfg) =>
                 {
@@ -42,6 +43,11 @@ public static class MassTransitConfiguration
                     cfg.ReceiveEndpoint("payment-processed-queue", e =>
                     {
                         e.ConfigureConsumer<PaymentProcessedConsumer>(ctx);
+                    });
+
+                    cfg.ReceiveEndpoint("order-placed-queue", e =>
+                    {
+                        e.ConfigureConsumer<OrderPlacedConsumer>(ctx);
                     });
                 });
             });
