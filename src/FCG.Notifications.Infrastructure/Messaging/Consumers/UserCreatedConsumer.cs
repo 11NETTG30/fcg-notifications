@@ -1,4 +1,5 @@
 using FCG.Notifications.Application.Interfaces;
+using FCG.Notifications.Infrastructure.Templates;
 using FCG.Shared.Contracts.Events;
 using MassTransit;
 using Microsoft.Extensions.Logging;
@@ -18,10 +19,13 @@ public class UserCreatedConsumer(ILogger<UserCreatedConsumer> logger, IServicoEm
 
         try
         {
-            await servicoEmail.EnviarAsync(
-                evt.Email,
-                "Bem-vindo ao FCG!",
-                $"<h1>Olá, {evt.Nome}!</h1><p>Sua conta foi criada com sucesso.</p>");
+            var corpo = CarregadorTemplate.Carregar("boas-vindas.html", new Dictionary<string, string>
+            {
+                ["NOME"]  = evt.Nome,
+                ["EMAIL"] = evt.Email
+            });
+
+            await servicoEmail.EnviarAsync(evt.Email, "Bem-vindo ao FCG!", corpo);
         }
         catch (Exception ex)
         {

@@ -1,4 +1,5 @@
 using FCG.Notifications.Application.Interfaces;
+using FCG.Notifications.Infrastructure.Templates;
 using FCG.Shared.Contracts.Events;
 using MassTransit;
 using Microsoft.Extensions.Logging;
@@ -20,10 +21,13 @@ public class PaymentProcessedConsumer(ILogger<PaymentProcessedConsumer> logger, 
 
             try
             {
-                await servicoEmail.EnviarAsync(
-                    evt.Email,
-                    "Compra confirmada — FCG",
-                    $"<h1>Compra aprovada!</h1><p>OrderId: {evt.OrderId}</p><p>PaymentId: {evt.PaymentId}</p>");
+                var corpo = CarregadorTemplate.Carregar("compra-confirmada.html", new Dictionary<string, string>
+                {
+                    ["ORDER_ID"]   = evt.OrderId.ToString(),
+                    ["PAYMENT_ID"] = evt.PaymentId.ToString()
+                });
+
+                await servicoEmail.EnviarAsync(evt.Email, "Compra confirmada — FCG", corpo);
             }
             catch (Exception ex)
             {
@@ -38,10 +42,12 @@ public class PaymentProcessedConsumer(ILogger<PaymentProcessedConsumer> logger, 
 
             try
             {
-                await servicoEmail.EnviarAsync(
-                    evt.Email,
-                    "Pagamento recusado — FCG",
-                    $"<h1>Pagamento recusado</h1><p>Seu pagamento para o pedido {evt.OrderId} não foi aprovado.</p><p>Tente novamente ou utilize outro meio de pagamento.</p>");
+                var corpo = CarregadorTemplate.Carregar("pagamento-recusado.html", new Dictionary<string, string>
+                {
+                    ["ORDER_ID"] = evt.OrderId.ToString()
+                });
+
+                await servicoEmail.EnviarAsync(evt.Email, "Pagamento recusado — FCG", corpo);
             }
             catch (Exception ex)
             {

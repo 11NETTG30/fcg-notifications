@@ -1,4 +1,5 @@
 using FCG.Notifications.Application.Interfaces;
+using FCG.Notifications.Infrastructure.Templates;
 using FCG.Shared.Contracts.Events;
 using MassTransit;
 using Microsoft.Extensions.Logging;
@@ -11,7 +12,6 @@ public class OrderPlacedConsumer(ILogger<OrderPlacedConsumer> logger, IServicoEm
     public async Task Consume(ConsumeContext<OrderPlacedEvent> context)
     {
         var evt = context.Message;
-
         var tituloJogo = evt.TituloJogo ?? evt.GameId.ToString();
 
         logger.LogInformation(
@@ -20,10 +20,13 @@ public class OrderPlacedConsumer(ILogger<OrderPlacedConsumer> logger, IServicoEm
 
         try
         {
-            await servicoEmail.EnviarAsync(
-                evt.Email,
-                $"Pedido realizado — {tituloJogo}",
-                $"<h1>Pedido recebido!</h1><p>Seu pedido do jogo <strong>{tituloJogo}</strong> foi registrado com sucesso.</p><p>Valor: R$ {evt.Price:F2}</p><p>Em breve você receberá a confirmação do pagamento.</p>");
+            var corpo = CarregadorTemplate.Carregar("pedido-realizado.html", new Dictionary<string, string>
+            {
+                ["TITULO_JOGO"] = tituloJogo,
+                ["PRECO"]       = evt.Price.ToString("F2")
+            });
+
+            await servicoEmail.EnviarAsync(evt.Email, $"Pedido realizado — {tituloJogo}", corpo);
         }
         catch (Exception ex)
         {
