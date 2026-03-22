@@ -12,16 +12,18 @@ public class OrderPlacedConsumer(ILogger<OrderPlacedConsumer> logger, IServicoEm
     {
         var evt = context.Message;
 
+        var tituloJogo = evt.TituloJogo ?? evt.GameId.ToString();
+
         logger.LogInformation(
-            "[EMAIL ENVIADO] Pedido realizado para {Email}. GameId: {GameId}, UserId: {UserId}, Price: {Price}",
-            evt.Email, evt.GameId, evt.UserId, evt.Price);
+            "[EMAIL ENVIADO] Pedido realizado para {Email}. Jogo: {TituloJogo}, UserId: {UserId}, Price: {Price}",
+            evt.Email, tituloJogo, evt.UserId, evt.Price);
 
         try
         {
             await servicoEmail.EnviarAsync(
                 evt.Email,
-                "Pedido realizado — FCG",
-                $"<h1>Pedido recebido!</h1><p>Seu pedido foi registrado com sucesso.</p><p>Jogo: {evt.GameId}</p><p>Valor: R$ {evt.Price:F2}</p><p>Em breve você receberá a confirmação do pagamento.</p>");
+                $"Pedido realizado — {tituloJogo}",
+                $"<h1>Pedido recebido!</h1><p>Seu pedido do jogo <strong>{tituloJogo}</strong> foi registrado com sucesso.</p><p>Valor: R$ {evt.Price:F2}</p><p>Em breve você receberá a confirmação do pagamento.</p>");
         }
         catch (Exception ex)
         {
