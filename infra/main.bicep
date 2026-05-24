@@ -194,6 +194,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         [
           #disable-next-line use-secure-value-for-secure-inputs
           { name: 'rabbitmq-connection', value: rabbitMqConnectionString }
+          #disable-next-line use-secure-value-for-secure-inputs
+          { name: 'storage-connection', value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=core.windows.net' }
         ],
         empty(smtpSenha) ? [] : [{ name: 'smtp-senha', value: smtpSenha }]
       )
@@ -215,6 +217,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           }
           env: [
             { name: 'RabbitMq', secretRef: 'rabbitmq-connection' }
+            { name: 'AzureWebJobsStorage', secretRef: 'storage-connection' }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
             { name: 'Smtp__Host', value: smtpHost }
             { name: 'Smtp__Porta', value: smtpPorta }
