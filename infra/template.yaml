@@ -1,0 +1,104 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: |
+  FCG Notifications - Função Lambda acionada pelo Amazon MQ for RabbitMQ.
+  Substitui o microsserviço container 24/7 por execução sob demanda.
+
+Parameters:
+  ImageUri:
+    Type: String
+    Description: URI da imagem no ECR (ex.- 123456789012.dkr.ecr.us-east-1.amazonaws.com/fcg-notifications-fn:latest)
+
+  BrokerArn:
+    Type: String
+    Description: ARN do broker Amazon MQ for RabbitMQ
+
+  BrokerCredentialsSecretArn:
+    Type: String
+    Description: ARN do Secret no Secrets Manager com username/password do broker (formato- {"username":"...","password":"..."})
+
+  Queues:
+    Type: CommaDelimitedList
+    Default: "user-created-queue,order-placed-queue,payment-processed-queue"
+    Description: Filas do RabbitMQ que disparam a função
+
+  VpcSubnetIds:
+    Type: CommaDelimitedList
+    Description: Subnets privadas com rota para o broker (mesma VPC do Amazon MQ)
+
+  VpcSecurityGroupIds:
+    Type: CommaDelimitedList
+    Description: Security groups liberando saída para 5671/TCP (AMQPS) no broker
+
+  SmtpHost:
+    Type: String
+    Description: Host SMTP (ex.- email-smtp.us-east-1.amazonaws.com para SES)
+  SmtpPorta:
+    Type: String
+    Default: "587"
+  SmtpRemetente:
+    Type: String
+    Default: "noreply@fcg.com"
+  SmtpUsuario:
+    Type: String
+    Default: ""
+    NoEcho: true
+  SmtpSenha:
+    Type: String
+    Default: ""
+    NoEcho: true
+
+Resources:
+  NotificationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: fcg-notifications-fn
+      PackageType: Image
+      ImageUri: !Ref ImageUri
+      MemorySize: 512
+      Timeout: 30
+      Architectures:
+        - x86_64
+      VpcConfig:
+        SubnetIds: !Ref VpcSubnetIds
+        SecurityGroupIds: !Ref VpcSecurityGroupIds
+      Environment:
+        Variables:
+          Smtp__Host: !Ref SmtpHost
+          Smtp__Porta: !Ref SmtpPorta
+          Smtp__Remetente: !Ref SmtpRemetente
+          Smtp__Usuario: !Ref SmtpUsuario
+          Smtp__Senha: !Ref SmtpSenha
+      Policies:
+        - AWSLambdaVPCAccessExecutionRole
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource:
+                - !Ref BrokerCredentialsSecretArn
+      Events:
+        RabbitMQTrigger:
+          Type: MQ
+          Properties:
+            Broker: !Ref BrokerArn
+            Queues: !Ref Queues
+            BatchSize: 10
+            Enabled: true
+            SourceAccessConfigurations:
+              - Type: BASIC_AUTH
+                URI: !Ref BrokerCredentialsSecretArn
+
+  NotificationsFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${NotificationsFunction}"
+      RetentionInDays: 14
+
+Outputs:
+  FunctionArn:
+    Description: ARN da função Lambda
+    Value: !GetAtt NotificationsFunction.Arn
+  FunctionName:
+    Description: Nome da função
+    Value: !Ref NotificationsFunction

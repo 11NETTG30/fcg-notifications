@@ -1,10 +1,11 @@
 using System.Reflection;
+using FCG.Notifications.Application.Templates;
 
 namespace FCG.Notifications.Infrastructure.Templates;
 
-internal static class CarregadorTemplate
+public sealed class CarregadorTemplate : ICarregadorTemplate
 {
-    public static string Carregar(string nomeArquivo, IDictionary<string, string> variaveis)
+    public string Carregar(string nomeArquivo, IDictionary<string, string> variaveis)
     {
         var assembly = Assembly.GetExecutingAssembly();
         var recurso = $"FCG.Notifications.Infrastructure.Templates.{nomeArquivo}";

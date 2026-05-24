@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <OutputType>Exe</OutputType>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AssemblyName>bootstrap</AssemblyName>
+        <PublishReadyToRun>true</PublishReadyToRun>
+        <TieredCompilation>true</TieredCompilation>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Amazon.Lambda.Core" Version="2.5.1" />
+        <PackageReference Include="Amazon.Lambda.RuntimeSupport" Version="1.13.1" />
+        <PackageReference Include="Amazon.Lambda.Serialization.SystemTextJson" Version="2.4.4" />
+        <PackageReference Include="Amazon.Lambda.RabbitMQEvents" Version="2.0.0" />
+        <PackageReference Include="AWSSDK.SecretsManager" Version="3.7.400.50" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\FCG.Notifications.Application\FCG.Notifications.Application.csproj" />
+        <ProjectReference Include="..\FCG.Notifications.Infrastructure\FCG.Notifications.Infrastructure.csproj" />
+    </ItemGroup>
+
+</Project>

@@ -1,0 +1,11 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "fcg-notifications"
+region = "us-east-1"
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_image_repos = false
+image_repositories = []
+# Preencha após o primeiro deploy:
+# parameter_overrides = "ImageUri=<acct>.dkr.ecr.us-east-1.amazonaws.com/fcg-notifications-fn:latest BrokerArn=arn:aws:mq:... BrokerCredentialsSecretArn=arn:aws:secretsmanager:... VpcSubnetIds=subnet-aaa,subnet-bbb VpcSecurityGroupIds=sg-xxx SmtpHost=email-smtp.us-east-1.amazonaws.com SmtpRemetente=noreply@fcg.com SmtpUsuario=AKIA... SmtpSenha=..."
