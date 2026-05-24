@@ -18,12 +18,9 @@ param acrLoginServer string
 @description('Resource ID da identidade gerenciada com AcrPull no registry')
 param userAssignedIdentityId string
 
-@description('Usuario do RabbitMQ')
-param rabbitMqUser string = 'fcg'
-
-@description('Senha do RabbitMQ')
+@description('Connection string AMQP do RabbitMQ (ex.: amqps://user:pass@host/vhost)')
 @secure()
-param rabbitMqPassword string
+param rabbitMqConnectionString string
 
 @description('Limite de mensagens por replica que dispara scale-up no KEDA')
 param kedaQueueLength string = '5'
@@ -79,7 +76,7 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
-// ----------- Storage Account para persistencia do RabbitMQ -------------------------
+// ----------- Storage Account para AzureWebJobsStorage das Functions ----------------
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: replace('${namePrefix}stor', '-', '')
   location: location
@@ -91,97 +88,10 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   }
 }
 
-resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2023-01-01' = {
-  name: 'default'
-  parent: storageAccount
-}
-
-resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
-  name: 'rabbitmq-data'
-  parent: fileService
-  properties: {
-    shareQuota: 1
-  }
-}
-
-// ----------- Volume Azure Files no Container Apps Environment ----------------------
-resource environmentStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
-  name: 'rabbitmq-storage'
-  parent: environment
-  properties: {
-    azureFile: {
-      accountName: storageAccount.name
-      accountKey: storageAccount.listKeys().keys[0].value
-      shareName: fileShare.name
-      accessMode: 'ReadWrite'
-    }
-  }
-}
-
-// ----------- RabbitMQ Container App ------------------------------------------------
-var rabbitMqAppName = '${namePrefix}-rabbitmq'
-var encodedRabbitMqPassword = replace(replace(replace(rabbitMqPassword, '@', '%40'), '/', '%2F'), '#', '%23')
-var rabbitMqInternalFqdn = '${rabbitMqAppName}.internal.${environment.properties.defaultDomain}'
-var rabbitMqConnectionString = 'amqp://${rabbitMqUser}:${encodedRabbitMqPassword}@${rabbitMqInternalFqdn}:5672/'
-
-resource rabbitMqApp 'Microsoft.App/containerApps@2024-03-01' = {
-  name: rabbitMqAppName
-  location: location
-  properties: {
-    managedEnvironmentId: environment.id
-    configuration: {
-      activeRevisionsMode: 'Single'
-      ingress: {
-        external: false
-        transport: 'tcp'
-        exposedPort: 5672
-        targetPort: 5672
-      }
-      secrets: [
-        { name: 'rabbitmq-password', value: rabbitMqPassword }
-      ]
-    }
-    template: {
-      volumes: [
-        {
-          name: 'rabbitmq-data'
-          storageType: 'AzureFile'
-          storageName: environmentStorage.name
-        }
-      ]
-      containers: [
-        {
-          name: 'rabbitmq'
-          image: 'rabbitmq:4-management'
-          resources: {
-            cpu: json('0.5')
-            memory: '1.0Gi'
-          }
-          env: [
-            { name: 'RABBITMQ_DEFAULT_USER', value: rabbitMqUser }
-            { name: 'RABBITMQ_DEFAULT_PASS', secretRef: 'rabbitmq-password' }
-          ]
-          volumeMounts: [
-            {
-              volumeName: 'rabbitmq-data'
-              mountPath: '/var/lib/rabbitmq/mnesia'
-            }
-          ]
-        }
-      ]
-      scale: {
-        minReplicas: 1
-        maxReplicas: 1
-      }
-    }
-  }
-}
-
 // ----------- Container App (FCG Notifications Function) ----------------------------
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: '${namePrefix}-fn'
   location: location
-  dependsOn: [rabbitMqApp]
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
@@ -194,7 +104,6 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       activeRevisionsMode: 'Single'
       secrets: concat(
         [
-          #disable-next-line use-secure-value-for-secure-inputs
           { name: 'rabbitmq-connection', value: rabbitMqConnectionString }
           #disable-next-line use-secure-value-for-secure-inputs
           { name: 'storage-connection', value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=core.windows.net' }
@@ -283,5 +192,4 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 output containerAppName string = containerApp.name
-output rabbitMqAppName string = rabbitMqApp.name
 output appInsightsConnectionString string = appInsights.properties.ConnectionString

@@ -33,12 +33,12 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ACA_IDENTITY_ID: ${{ secrets.ACA_IDENTITY_ID }}
-          RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
+          RABBITMQ_CONNECTION_STRING: ${{ secrets.RABBITMQ_CONNECTION_STRING }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           NUGET_AUTH_TOKEN: ${{ secrets.NUGET_AUTH_TOKEN }}
         run: |
           faltando=()
-          for v in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID ACA_IDENTITY_ID RABBITMQ_PASSWORD SMTP_HOST NUGET_AUTH_TOKEN; do
+          for v in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID ACA_IDENTITY_ID RABBITMQ_CONNECTION_STRING SMTP_HOST NUGET_AUTH_TOKEN; do
             if [ -z "${!v}" ]; then faltando+=("$v"); fi
           done
           if [ ${#faltando[@]} -ne 0 ]; then
@@ -95,7 +95,7 @@ jobs:
             containerImage=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
             acrLoginServer=${{ env.ACR_NAME }}.azurecr.io
             userAssignedIdentityId=${{ secrets.ACA_IDENTITY_ID }}
-            rabbitMqPassword=${{ secrets.RABBITMQ_PASSWORD }}
+            rabbitMqConnectionString=${{ secrets.RABBITMQ_CONNECTION_STRING }}
             smtpHost=${{ secrets.SMTP_HOST }}
             smtpPorta=${{ secrets.SMTP_PORTA }}
             smtpRemetente=${{ secrets.SMTP_REMETENTE }}
