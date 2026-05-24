@@ -13,7 +13,8 @@ COPY src/FCG.Notifications.Function/FCG.Notifications.Function.csproj          F
 
 RUN --mount=type=secret,id=nuget_auth_token \
     NUGET_AUTH_TOKEN="$(cat /run/secrets/nuget_auth_token 2>/dev/null || echo '')" \
-    dotnet restore FCG.Notifications.Function/FCG.Notifications.Function.csproj
+    dotnet restore FCG.Notifications.Function/FCG.Notifications.Function.csproj \
+    --runtime linux-x64
 
 COPY src/FCG.Notifications.Application/   FCG.Notifications.Application/
 COPY src/FCG.Notifications.Infrastructure/ FCG.Notifications.Infrastructure/
