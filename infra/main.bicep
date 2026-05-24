@@ -190,10 +190,13 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     managedEnvironmentId: environment.id
     configuration: {
       activeRevisionsMode: 'Single'
-      secrets: [
-        { name: 'rabbitmq-connection', value: rabbitMqConnectionString }
-        { name: 'smtp-senha', value: smtpSenha }
-      ]
+      secrets: concat(
+        [
+          #disable-next-line use-secure-value-for-secure-inputs
+          { name: 'rabbitmq-connection', value: rabbitMqConnectionString }
+        ],
+        empty(smtpSenha) ? [] : [{ name: 'smtp-senha', value: smtpSenha }]
+      )
       registries: [
         {
           server: acrLoginServer
@@ -217,7 +220,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'Smtp__Porta', value: smtpPorta }
             { name: 'Smtp__Remetente', value: smtpRemetente }
             { name: 'Smtp__Usuario', value: smtpUsuario }
-            { name: 'Smtp__Senha', secretRef: 'smtp-senha' }
+            ...(!empty(smtpSenha) ? [{ name: 'Smtp__Senha', secretRef: 'smtp-senha' }] : [])
             { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'dotnet-isolated' }
           ]
         }
