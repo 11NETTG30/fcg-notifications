@@ -164,7 +164,7 @@ resource rabbitMqApp 'Microsoft.App/containerApps@2024-03-01' = {
           volumeMounts: [
             {
               volumeName: 'rabbitmq-data'
-              mountPath: '/var/lib/rabbitmq'
+              mountPath: '/var/lib/rabbitmq/mnesia'
             }
           ]
         }
