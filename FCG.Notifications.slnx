@@ -1,8 +1,9 @@
 <Solution>
   <Folder Name="/Solution Items/">
     <File Path="README.md" />
-    <File Path="infra/template.yaml" />
+    <File Path="infra/main.bicep" />
     <File Path="src/FCG.Notifications.Function/Dockerfile" />
+    <File Path="src/FCG.Notifications.Function/host.json" />
   </Folder>
   <Project Path="src/FCG.Notifications.Application/FCG.Notifications.Application.csproj" />
   <Project Path="src/FCG.Notifications.Infrastructure/FCG.Notifications.Infrastructure.csproj" />

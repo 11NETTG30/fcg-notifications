@@ -5,27 +5,32 @@
         <OutputType>Exe</OutputType>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
-        <AssemblyName>bootstrap</AssemblyName>
-        <PublishReadyToRun>true</PublishReadyToRun>
-        <TieredCompilation>true</TieredCompilation>
+        <AzureFunctionsVersion>v4</AzureFunctionsVersion>
+        <RootNamespace>FCG.Notifications.Function</RootNamespace>
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Amazon.Lambda.Core" Version="2.5.1" />
-        <PackageReference Include="Amazon.Lambda.RuntimeSupport" Version="1.13.1" />
-        <PackageReference Include="Amazon.Lambda.Serialization.SystemTextJson" Version="2.4.4" />
-        <PackageReference Include="Amazon.Lambda.RabbitMQEvents" Version="2.0.0" />
-        <PackageReference Include="AWSSDK.SecretsManager" Version="3.7.400.50" />
-        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
-        <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
-        <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
+        <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="2.52.0" />
+        <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.7" />
+        <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.RabbitMQ" Version="2.1.0" />
+        <PackageReference Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.50.0" />
+        <PackageReference Include="Microsoft.ApplicationInsights.WorkerService" Version="2.22.0" />
         <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.0" />
     </ItemGroup>
 
     <ItemGroup>
         <ProjectReference Include="..\FCG.Notifications.Application\FCG.Notifications.Application.csproj" />
         <ProjectReference Include="..\FCG.Notifications.Infrastructure\FCG.Notifications.Infrastructure.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="host.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Update="local.settings.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+        </None>
     </ItemGroup>
 
 </Project>

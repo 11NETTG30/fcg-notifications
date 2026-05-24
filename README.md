@@ -1,8 +1,8 @@
 # fcg-notifications
 
-Função **AWS Lambda** de notificações do **FIAP Cloud Games (FCG)**.
+**Azure Function** de notificações do **FIAP Cloud Games (FCG)**, hospedada em **Azure Container Apps** com **KEDA** fazendo scale-to-zero baseado em profundidade das filas RabbitMQ.
 
-Acionada diretamente por mensagens do **Amazon MQ for RabbitMQ** (event source mapping da Lambda), substituindo o container 24/7 que rodava continuamente. Envia e-mails transacionais via SMTP em resposta a eventos de domínio publicados pelos demais microsserviços.
+Substitui o container 24/7 da NotificationsAPI por execução serverless: quando há mensagem na fila, KEDA acorda o container; quando a fila esvazia e fica ociosa, ele desliga. Custo pay-per-use.
 
 ---
 
@@ -10,13 +10,15 @@ Acionada diretamente por mensagens do **Amazon MQ for RabbitMQ** (event source m
 
 | Categoria | Tecnologia |
 |---|---|
-| Runtime | .NET 10 (container image, base `public.ecr.aws/lambda/provided:al2023`) |
-| Linguagem | C# 14 |
-| Empacotamento | Container Image publicada no Amazon ECR |
-| IaC | AWS SAM (`infra/template.yaml`) |
-| Trigger | Amazon MQ for RabbitMQ (Event Source Mapping) |
-| E-mail | MailKit (SMTP, compatível com Amazon SES / Mailpit) |
-| CI/CD | GitHub Actions com OIDC -> AWS |
+| Runtime | .NET 10 (self-contained, isolated worker) |
+| Framework | Azure Functions v4 (`Microsoft.Azure.Functions.Worker`) |
+| Trigger | RabbitMQ (extension oficial — funciona com qualquer broker) |
+| Hospedagem | Azure Container Apps (scale-to-zero via KEDA) |
+| Registry | Azure Container Registry |
+| Observabilidade | Application Insights + Log Analytics |
+| IaC | Bicep (`infra/main.bicep`) |
+| CI/CD | GitHub Actions com OIDC → Azure |
+| E-mail | MailKit (SMTP — SendGrid / SES SMTP / Mailpit) |
 
 ---
 
@@ -26,18 +28,24 @@ Acionada diretamente por mensagens do **Amazon MQ for RabbitMQ** (event source m
 Producers (UsersAPI, PaymentsAPI, CatalogAPI)
         │ publish (MassTransit / RabbitMQ)
         ▼
-Amazon MQ for RabbitMQ (broker gerenciado, VPC privada)
+RabbitMQ (broker existente em fcg-infra/k8s, sem mudanças)
    ├── user-created-queue
    ├── order-placed-queue
    └── payment-processed-queue
-        │ event source mapping
-        ▼
-AWS Lambda (fcg-notifications-fn)
-        │
-        ├── Dispatcher (roteia pelo nome da fila)
-        ├── EventoHandler<T> (UserCreated / OrderPlaced / PaymentProcessed)
-        └── ServicoEmail (SMTP -> SES / outro)
+        ▲                              ▲
+        │ peek (queue length)          │ consume
+        │                              │
+   KEDA RabbitMQ Scaler ─── escala ──► Container App (0..N replicas)
+                                              │
+                                              ├── 3 Azure Functions (RabbitMQTrigger)
+                                              ├── EventoHandler<T>
+                                              └── ServicoEmail (SMTP)
 ```
+
+**Por que Container Apps em vez de Functions Premium/B1?**
+- Premium plan: ~US$ 140/mês (overkill)
+- App Service Plan B1: ~US$ 13/mês mas sem scale-to-zero
+- **Container Apps**: pay-per-use real, sem instância ociosa, com KEDA decidindo a escala
 
 ### Estrutura do código
 
@@ -46,249 +54,228 @@ src/
 ├── FCG.Notifications.Application/
 │   ├── Interfaces/IServicoEmail.cs
 │   ├── Templates/ICarregadorTemplate.cs
-│   └── EventHandlers/
-│       ├── IEventoHandler.cs
-│       ├── UserCreatedHandler.cs
-│       ├── OrderPlacedHandler.cs
-│       └── PaymentProcessedHandler.cs
+│   └── EventHandlers/  (IEventoHandler<T> + 3 handlers POCO)
 ├── FCG.Notifications.Infrastructure/
 │   ├── Email/ServicoEmail.cs
 │   ├── Templates/CarregadorTemplate.cs + *.html (EmbeddedResource)
-│   └── Messaging/MassTransitEnvelope.cs (parser do envelope)
+│   └── Messaging/MassTransitEnvelope.cs   ← parser do envelope MassTransit
 └── FCG.Notifications.Function/
-    ├── Function.cs       <- entrypoint Lambda (LambdaBootstrapBuilder)
-    ├── Dispatcher.cs     <- roteia por nome de fila
-    ├── CompositionRoot.cs<- DI (Microsoft.Extensions.DependencyInjection)
-    └── Dockerfile        <- multi-stage com SDK 10 + provided:al2023
+    ├── Program.cs                ← host builder + DI
+    ├── NotificationFunctions.cs  ← 3 funções (uma por queue) com [RabbitMQTrigger]
+    ├── host.json
+    ├── local.settings.json
+    └── Dockerfile
 
 infra/
-├── template.yaml         <- SAM (Lambda + EventSourceMapping + IAM)
-└── samconfig.toml
+├── main.bicep                    ← Container App + ACR ref + KEDA scalers + AppInsights
+└── main.parameters.example.json
 
 .github/workflows/
-└── deploy-lambda.yml     <- build da imagem, push ECR, sam deploy
+└── deploy-azure.yml              ← OIDC -> ACR push -> az deployment group
 ```
 
-### Como a Lambda processa uma mensagem
-
-1. A Event Source Mapping da Lambda assina as filas configuradas no broker.
-2. A AWS entrega um `RabbitMQEvent` contendo `RmqMessagesByQueue` com pares `{ "<fila>::<vhost>": [mensagens] }`.
-3. `Function.HandlerAsync` itera o batch e delega ao `Dispatcher`.
-4. O `Dispatcher` decodifica o `Data` (base64), identifica a fila e desserializa o envelope MassTransit em um DTO de `FCG.Shared.Contracts.Events`.
-5. O `IEventoHandler<T>` correspondente carrega o template HTML e dispara o e-mail via SMTP.
-
-Falhas são logadas mas não propagadas, preservando o ack do batch (mesmo comportamento do consumer original).
-
-> Consulte [fcg-shared](https://github.com/11NETTG30/fcg-shared) para os contratos de evento (`UserCreatedEvent`, `OrderPlacedEvent`, `PaymentProcessedEvent`).
+### Fluxo de uma mensagem
+1. Producer publica `OrderPlacedEvent` no exchange `OrderPlacedEvent` (fanout, configurado pelo MassTransit).
+2. Mensagem chega em `order-placed-queue` (bound ao exchange).
+3. KEDA detecta `messageCount >= 1` e escala o Container App de 0 para 1.
+4. Functions Host arranca, o trigger `[RabbitMQTrigger("order-placed-queue", ...)]` conecta e consome.
+5. `MassTransitEnvelopeReader.Extrair<T>` desserializa o envelope, extraindo o payload.
+6. `OrderPlacedHandler` carrega o template HTML e dispara o e-mail via SMTP.
+7. Após ~5 min sem mensagens novas, KEDA escala de volta para 0.
 
 ---
 
 ## Build e teste local
 
-> Não há mais API HTTP — este projeto é exclusivamente uma função Lambda.
-
 ### Pré-requisitos
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 - [Docker](https://docs.docker.com/get-docker/)
-- [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
-- [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html)
-- Acesso ao GitHub Packages da organização [11NETTG30](https://github.com/11NETTG30) (token com escopo `read:packages` exportado como `NUGET_AUTH_TOKEN`)
+- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)
+- [Azure Functions Core Tools v4](https://learn.microsoft.com/azure/azure-functions/functions-run-local)
+- RabbitMQ acessível (`docker run -p 5672:5672 -p 15672:15672 rabbitmq:3-management`)
+- Mailpit (`docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`) ou outro SMTP
+- Token GitHub Packages (`NUGET_AUTH_TOKEN`) para pacotes `FCG.*`
 
-### Compilar localmente
-
+### Rodar com Azure Functions Core Tools
 ```bash
-export NUGET_AUTH_TOKEN=<seu_token_pat>
-dotnet build src/FCG.Notifications.Function/FCG.Notifications.Function.csproj
+export NUGET_AUTH_TOKEN=<seu_pat>
+cd src/FCG.Notifications.Function
+func start
 ```
 
-### Invocar localmente com SAM (opcional)
+Os valores em `local.settings.json` apontam para RabbitMQ e SMTP locais (porta 5672 e 1025 respectivamente).
 
-Crie um arquivo `events/rabbitmq.json` com um payload de exemplo:
-
-```json
-{
-  "eventSource": "aws:rmq",
-  "eventSourceArn": "arn:aws:mq:us-east-1:123456789012:broker:fcg-broker:b-xxxxxx",
-  "rmqMessagesByQueue": {
-    "user-created-queue::/": [
-      {
-        "basicProperties": { "contentType": "application/json" },
-        "data": "<JSON_DO_ENVELOPE_MASSTRANSIT_EM_BASE64>",
-        "redelivered": false
-      }
-    ]
-  }
-}
-```
-
+### Testar via container localmente
 ```bash
 docker build \
   --secret id=nuget_auth_token,env=NUGET_AUTH_TOKEN \
   -f src/FCG.Notifications.Function/Dockerfile \
   -t fcg-notifications-fn:dev .
 
-sam local invoke NotificationsFunction \
-  --template infra/template.yaml \
-  --event events/rabbitmq.json \
-  --docker-network host
+docker run --rm \
+  -e RabbitMq="amqp://guest:guest@host.docker.internal:5672/" \
+  -e Smtp__Host=host.docker.internal -e Smtp__Porta=1025 \
+  -e FUNCTIONS_WORKER_RUNTIME=dotnet-isolated \
+  fcg-notifications-fn:dev
 ```
 
 ---
 
-## Setup AWS — Passo a passo
+## Setup Azure — Passo a passo
 
-> Tudo abaixo é executado **uma única vez** para preparar a conta AWS antes do primeiro deploy.
+> Tudo abaixo é executado **uma vez** para preparar a assinatura Azure antes do primeiro deploy.
 
-### 1. Configurar AWS CLI
-
+### 1. Login Azure CLI
 ```bash
-aws configure
-# Region: us-east-1 (ou a sua escolha — atualize template.yaml/workflow se mudar)
+az login
+az account set --subscription "<sua-subscription-id>"
 ```
 
-### 2. Provisionar VPC (se ainda não existir)
-
-A Lambda precisa estar na mesma VPC do broker Amazon MQ. Reutilize uma VPC existente ou crie pelo console:
-- 2 subnets privadas em AZs diferentes
-- 1 NAT Gateway (necessário para a Lambda alcançar a Internet — SES, Secrets Manager, etc.)
-- 1 Security Group para a Lambda (saída para 5671/TCP no broker e 443 para serviços AWS)
-- 1 Security Group para o broker (entrada para 5671/TCP do SG da Lambda)
-
-Anote os IDs: `subnet-aaa, subnet-bbb` e `sg-lambda, sg-broker`.
-
-### 3. Criar o broker Amazon MQ for RabbitMQ
-
-Console -> Amazon MQ -> Create broker -> RabbitMQ:
-- Engine: RabbitMQ 3.13+
-- Deployment: Single-instance (para dev) ou Cluster (produção)
-- Storage: EBS
-- VPC: a do passo 2; Subnet: privada
-- Security group: `sg-broker`
-- Usuário/senha do broker: defina (ex.: `fcg-admin / SenhaSegura123`)
-
-Após criado, anote o **ARN do broker** (algo como `arn:aws:mq:us-east-1:123456789012:broker:fcg-broker:b-...`).
-
-### 4. Guardar as credenciais do broker no Secrets Manager
-
+### 2. Criar Resource Group
 ```bash
-aws secretsmanager create-secret \
-  --name fcg/rabbitmq/credentials \
-  --secret-string '{"username":"fcg-admin","password":"SenhaSegura123"}'
+RG=fcg-notifications-rg
+LOC=brazilsouth
+az group create --name $RG --location $LOC
 ```
 
-Anote o **ARN do Secret** retornado.
-
-### 5. Criar repositório ECR para a imagem da função
-
+### 3. Criar Azure Container Registry
 ```bash
-aws ecr create-repository --repository-name fcg-notifications-fn --region us-east-1
+ACR_NAME=fcgnotifications   # precisa ser unico globalmente
+az acr create --resource-group $RG --name $ACR_NAME --sku Basic --admin-enabled false
 ```
 
-### 6. Configurar saída de e-mail (recomendado: Amazon SES)
+### 4. Criar User-Assigned Managed Identity (para o Container App puxar do ACR)
+```bash
+IDENTITY_NAME=fcg-aca-identity
+az identity create --resource-group $RG --name $IDENTITY_NAME
 
-1. Console -> SES -> verifique o domínio do remetente (ex.: `fcg.com`) ou ao menos um e-mail individual.
-2. Saia do sandbox do SES (se ainda estiver) — abra ticket de produção, ou continue no sandbox enviando apenas para e-mails verificados.
-3. SES -> SMTP settings -> **Create SMTP credentials** -> guarde **SMTP username** e **SMTP password** (não confundir com chave AWS).
-4. Host SMTP: `email-smtp.us-east-1.amazonaws.com`, porta `587`.
+IDENTITY_ID=$(az identity show -g $RG -n $IDENTITY_NAME --query id -o tsv)
+IDENTITY_PRINCIPAL_ID=$(az identity show -g $RG -n $IDENTITY_NAME --query principalId -o tsv)
+ACR_ID=$(az acr show -g $RG -n $ACR_NAME --query id -o tsv)
 
-> Se preferir SMTP externo (Brevo, SendGrid, Mailgun, etc.), basta apontar `SmtpHost` / `SmtpUsuario` / `SmtpSenha` para o provedor.
-
-### 7. Configurar OIDC para o GitHub Actions (deploy automatizado)
-
-a) Crie o **Identity Provider OIDC** na AWS apontando para `https://token.actions.githubusercontent.com` (audience `sts.amazonaws.com`).
-b) Crie uma **IAM Role** com trust policy:
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Principal": { "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com" },
-    "Action": "sts:AssumeRoleWithWebIdentity",
-    "Condition": {
-      "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
-      "StringLike":   { "token.actions.githubusercontent.com:sub": "repo:11NETTG30/fcg-notifications:*" }
-    }
-  }]
-}
+# Conceder AcrPull
+az role assignment create \
+  --assignee-object-id $IDENTITY_PRINCIPAL_ID \
+  --assignee-principal-type ServicePrincipal \
+  --role AcrPull \
+  --scope $ACR_ID
 ```
-c) Anexe a política gerenciada `AWSCloudFormationFullAccess` + uma política inline mínima:
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    { "Effect": "Allow", "Action": ["ecr:*", "lambda:*", "iam:PassRole", "iam:CreateRole", "iam:AttachRolePolicy", "iam:PutRolePolicy", "iam:DeleteRole", "iam:DetachRolePolicy", "iam:DeleteRolePolicy", "iam:GetRole", "iam:TagRole", "logs:*", "ec2:DescribeSubnets", "ec2:DescribeSecurityGroups", "ec2:DescribeVpcs", "secretsmanager:GetSecretValue"], "Resource": "*" }
-  ]
-}
+
+Guarde o valor de `$IDENTITY_ID` — vai virar a secret `ACA_IDENTITY_ID`.
+
+### 5. Expor o RabbitMQ atual (fcg-infra) para o Container App
+O broker que vive no Kubernetes do `fcg-infra` precisa estar acessível pelo Container App. Opções:
+
+**a) Mais simples (dev/projeto de pós):** expor o RabbitMQ via LoadBalancer público com TLS + autenticação. No `fcg-infra/k8s/rabbitmq/service.yaml`, mude o `type` para `LoadBalancer`. Pegue o IP público resultante e ajuste o `RABBITMQ_CONNECTION_STRING` com TLS (porta 5671) e usuário/senha fortes.
+
+**b) Mais seguro:** Container Apps Environment com **VNet integration** apontando para a mesma VNet do AKS. Requer subnet dedicada `/23` e configuração mais elaborada — fora do escopo desta documentação.
+
+A connection string completa deve ficar tipo:
 ```
-d) Anote o **ARN da Role** (`arn:aws:iam::<ACCOUNT_ID>:role/GhActionsDeployRole`).
+amqps://fcguser:senhaforte@meu-broker-publico.com:5671/
+```
+ou para teste com broker sem TLS (não recomendado em rede pública):
+```
+amqp://guest:guest@meu-broker-publico.com:5672/
+```
 
-### 8. Cadastrar os Secrets no GitHub
+### 6. Configurar SMTP
+Recomendado: **SendGrid** (free tier 100 e-mails/dia), Azure Communication Services Email, ou Mailgun.
+- Host (SendGrid): `smtp.sendgrid.net`, porta `587`
+- Usuário: `apikey`
+- Senha: a API key
 
-Repositório no GitHub -> Settings -> Secrets and variables -> Actions -> New repository secret:
+### 7. Criar App Registration para OIDC do GitHub Actions
+```bash
+APP_NAME=gh-fcg-notifications
+az ad app create --display-name $APP_NAME
+APP_ID=$(az ad app list --display-name $APP_NAME --query "[0].appId" -o tsv)
+az ad sp create --id $APP_ID
+SP_OBJECT_ID=$(az ad sp list --display-name $APP_NAME --query "[0].id" -o tsv)
+
+# Federated credential — substitui senha por OIDC
+az ad app federated-credential create --id $APP_ID --parameters "{
+  \"name\":\"github-main\",
+  \"issuer\":\"https://token.actions.githubusercontent.com\",
+  \"subject\":\"repo:11NETTG30/fcg-notifications:ref:refs/heads/main\",
+  \"audiences\":[\"api://AzureADTokenExchange\"]
+}"
+
+# Permissoes no resource group
+SUB_ID=$(az account show --query id -o tsv)
+az role assignment create --assignee $APP_ID \
+  --role Contributor --scope /subscriptions/$SUB_ID/resourceGroups/$RG
+az role assignment create --assignee $APP_ID \
+  --role AcrPush --scope $ACR_ID
+
+echo "AZURE_CLIENT_ID=$APP_ID"
+echo "AZURE_TENANT_ID=$(az account show --query tenantId -o tsv)"
+echo "AZURE_SUBSCRIPTION_ID=$SUB_ID"
+```
+
+### 8. Cadastrar secrets no GitHub
+Settings → Secrets and variables → Actions:
 
 | Secret | Valor |
 |---|---|
-| `AWS_DEPLOY_ROLE_ARN` | ARN da role do passo 7d |
-| `MQ_BROKER_ARN` | ARN do broker do passo 3 |
-| `MQ_BROKER_SECRET_ARN` | ARN do Secret do passo 4 |
-| `VPC_SUBNET_IDS` | `subnet-aaa,subnet-bbb` |
-| `VPC_SECURITY_GROUP_IDS` | `sg-lambda` |
-| `SMTP_HOST` | `email-smtp.us-east-1.amazonaws.com` |
+| `AZURE_CLIENT_ID` | App ID do passo 7 |
+| `AZURE_TENANT_ID` | Tenant ID do passo 7 |
+| `AZURE_SUBSCRIPTION_ID` | Subscription ID |
+| `ACA_IDENTITY_ID` | `$IDENTITY_ID` do passo 4 |
+| `RABBITMQ_CONNECTION_STRING` | `amqps://user:pass@host:5671/` do passo 5 |
+| `SMTP_HOST` | `smtp.sendgrid.net` (ou seu provedor) |
 | `SMTP_PORTA` | `587` |
-| `SMTP_REMETENTE` | `noreply@<seu-dominio>` |
-| `SMTP_USUARIO` | SMTP username do passo 6 |
-| `SMTP_SENHA` | SMTP password do passo 6 |
-| `NUGET_AUTH_TOKEN` | PAT do GitHub com `read:packages` para baixar `FCG.*` |
+| `SMTP_REMETENTE` | seu remetente |
+| `SMTP_USUARIO` | `apikey` (SendGrid) ou usuário do provedor |
+| `SMTP_SENHA` | API key ou senha |
+| `NUGET_AUTH_TOKEN` | PAT com `read:packages` |
 
 ### 9. Primeiro deploy
+**Opção A (recomendado):** Actions → **Deploy Container App (ACR + Bicep)** → Run workflow.
 
-Opção A — via GitHub Actions (recomendado):
-- Actions -> **Deploy Lambda (ECR + SAM)** -> **Run workflow** na branch `main`.
-
-Opção B — via terminal local:
+**Opção B (local):**
 ```bash
-export NUGET_AUTH_TOKEN=<seu_token>
-
-# build + push da imagem
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-ECR_URI=$ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/fcg-notifications-fn
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $ECR_URI
+export NUGET_AUTH_TOKEN=<seu_pat>
+az acr login --name $ACR_NAME
 
 docker build \
   --secret id=nuget_auth_token,env=NUGET_AUTH_TOKEN \
   -f src/FCG.Notifications.Function/Dockerfile \
   --platform linux/amd64 \
-  -t $ECR_URI:latest .
-docker push $ECR_URI:latest
+  -t $ACR_NAME.azurecr.io/fcg-notifications-fn:v1 .
+docker push $ACR_NAME.azurecr.io/fcg-notifications-fn:v1
 
-# deploy SAM
-cd infra
-sam deploy --guided \
-  --image-repositories NotificationsFunction=$ECR_URI \
-  --parameter-overrides \
-    ImageUri=$ECR_URI:latest \
-    BrokerArn=arn:aws:mq:... \
-    BrokerCredentialsSecretArn=arn:aws:secretsmanager:... \
-    VpcSubnetIds=subnet-aaa,subnet-bbb \
-    VpcSecurityGroupIds=sg-lambda \
-    SmtpHost=email-smtp.us-east-1.amazonaws.com \
-    SmtpPorta=587 \
-    SmtpRemetente=noreply@fcg.com \
-    SmtpUsuario=AKIA... \
-    SmtpSenha=...
+az deployment group create \
+  --resource-group $RG \
+  --template-file infra/main.bicep \
+  --parameters \
+    containerImage=$ACR_NAME.azurecr.io/fcg-notifications-fn:v1 \
+    acrLoginServer=$ACR_NAME.azurecr.io \
+    userAssignedIdentityId=$IDENTITY_ID \
+    rabbitMqConnectionString="amqps://user:pass@host:5671/" \
+    smtpHost=smtp.sendgrid.net smtpPorta=587 \
+    smtpRemetente=noreply@fcg.com \
+    smtpUsuario=apikey smtpSenha="SG.xxx"
 ```
 
-### 10. Apontar os producers para o Amazon MQ
-
-Nos demais microsserviços (UsersAPI, PaymentsAPI, CatalogAPI), troque o host do RabbitMQ pela URL do broker Amazon MQ (`<broker-id>.mq.us-east-1.amazonaws.com:5671`, com TLS habilitado) e as credenciais para as do passo 3. Os nomes das filas/exchanges continuam os mesmos.
+### 10. Verificar funcionamento
+- Publique uma mensagem em qualquer fila e observe no portal Azure: Container App → **Revisions and replicas** — uma replica deve aparecer em ~30s, processar, e sumir após o `cooldown` (default 5 min).
+- Logs: Container App → **Log stream** ou Application Insights → **Live Metrics**.
 
 ---
 
-## Observabilidade
+## Mudanças necessárias **fora deste repo** (não foram aplicadas)
 
-Logs da Lambda são entregues automaticamente ao **CloudWatch Logs** (`/aws/lambda/fcg-notifications-fn`).
+### Em `fcg-infra`
+- Remover `k8s/fcg-notifications/` (deployment obsoleto da NotificationsAPI).
+- Em `k8s/rabbitmq/service.yaml`, mudar `type: ClusterIP` para `type: LoadBalancer` se for usar o caminho de exposição pública. Manter `secret.yaml` com usuário admin novo (não usar `guest/guest` na internet).
 
-Para integrar com Datadog/New Relic (opção B do Tech Challenge), basta adicionar a respectiva Lambda Extension ao Dockerfile (camada do agente) e definir as variáveis de ambiente correspondentes (`DD_API_KEY` etc.) no `template.yaml`.
+### Em `fcg-users`, `fcg-payments`, `fcg-catalog`
+**Nenhuma mudança de código.** Os producers continuam publicando no mesmo broker via MassTransit. Só precisam:
+- Apontar `RabbitMQ:Host`/`RabbitMQ:Username`/`RabbitMQ:Password` para o broker exposto (novas credenciais).
+- Garantir conectividade rede.
+
+> Esse é o grande ganho de continuar com RabbitMQ em vez de migrar pra SNS/SQS ou Service Bus: producers ficam intocados.
 
 ---
 
@@ -296,7 +283,23 @@ Para integrar com Datadog/New Relic (opção B do Tech Challenge), basta adicion
 
 | Requisito do PDF | Como atendido |
 |---|---|
-| Migrar NotificationsAPI para Serverless | Container API removido; agora é AWS Lambda (`fcg-notifications-fn`) com `PackageType: Image` |
-| Função acionada diretamente por mensagens | Event source mapping `Type: MQ` no `template.yaml` apontando para o broker e suas filas |
-| Código + IaC em repositório próprio | Este repositório é "o repositório da função": código em `src/FCG.Notifications.Function/`, IaC SAM em `infra/template.yaml` |
-| Observabilidade | Logs CloudWatch automáticos; pronto para receber extensão APM (Datadog/New Relic) via Dockerfile |
+| Migrar NotificationsAPI para Função Serverless | Azure Functions isolated worker em Container Apps com KEDA scale-to-zero |
+| Função acionada diretamente por mensagens da fila | `[RabbitMQTrigger]` consome direto das 3 filas; KEDA escala 0→N por queue length |
+| Código + IaC em repositório próprio | Este repo: código em `src/FCG.Notifications.Function/`, IaC Bicep em `infra/main.bicep` |
+| Observabilidade | Application Insights ligado via `ConfigureFunctionsApplicationInsights()` + logs em Log Analytics |
+
+---
+
+## Custo estimado (dev/projeto)
+
+- Container Apps: ~US$ 0 enquanto em 0 réplicas; ~US$ 0.000024/vCPU·s + US$ 0.000003/GB·s em execução
+- Log Analytics: 5GB grátis/mês
+- Application Insights: 5GB grátis/mês
+- ACR Basic: ~US$ 5/mês
+- **Total típico em demos/projeto: < US$ 5/mês**
+
+## Limitações conhecidas
+
+- **`Microsoft.Azure.Functions.Worker.Extensions.RabbitMQ`** ainda esteve em preview por bastante tempo; verifique no [release notes](https://github.com/Azure/azure-functions-rabbitmq-extension) se a versão usada (1.0.0) está estável no seu cenário. Se houver problema, considere descer para a versão `0.x` mais recente.
+- A imagem base `mcr.microsoft.com/azure-functions/dotnet-isolated:4-dotnet-isolated8.0` traz .NET 8; nossa publish é self-contained .NET 10, o que funciona porque o Functions Host é desacoplado do runtime do worker (gRPC). Se sair imagem oficial `:4-dotnet-isolated10.0`, atualize a tag no `Dockerfile`.
+- **Não consegui rodar `dotnet build` na sessão** pois `FCG.Shared.Contracts` exige autenticação no GitHub Packages. Rode `dotnet build` localmente com `NUGET_AUTH_TOKEN` exportado para validar antes do primeiro deploy.

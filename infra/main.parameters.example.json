@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "containerImage":           { "value": "fcgnotifications.azurecr.io/fcg-notifications-fn:latest" },
+    "acrLoginServer":           { "value": "fcgnotifications.azurecr.io" },
+    "userAssignedIdentityId":   { "value": "/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/fcg-aca-identity" },
+    "rabbitMqConnectionString": { "value": "amqp://guest:guest@rabbitmq.example.com:5672/" },
+    "smtpHost":                 { "value": "smtp.sendgrid.net" },
+    "smtpPorta":                { "value": "587" },
+    "smtpRemetente":            { "value": "noreply@fcg.com" },
+    "smtpUsuario":              { "value": "apikey" },
+    "smtpSenha":                { "value": "SG.xxxxxxxx" }
+  }
+}
