@@ -120,7 +120,8 @@ resource environmentStorage 'Microsoft.App/managedEnvironments/storages@2024-03-
 
 // ----------- RabbitMQ Container App ------------------------------------------------
 var rabbitMqAppName = '${namePrefix}-rabbitmq'
-var rabbitMqConnectionString = 'amqp://${rabbitMqUser}:${rabbitMqPassword}@${rabbitMqAppName}:5672/'
+var encodedRabbitMqPassword = replace(replace(replace(rabbitMqPassword, '@', '%40'), '/', '%2F'), '#', '%23')
+var rabbitMqConnectionString = 'amqp://${rabbitMqUser}:${encodedRabbitMqPassword}@${rabbitMqAppName}:5672/'
 
 resource rabbitMqApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: rabbitMqAppName
